@@ -2,163 +2,187 @@
 **               HEADER
 ***************************************/
 
-#include <string.h>
-#include <stdlib.h>
+#include <stdio.h>
 #include <unistd.h>
-#include <sys/wait.h>
+#include <stdlib.h>
+#include <string.h>
 
-#define IN 0
-#define OUT 1
+typedef struct  s_cmd
+{
+    char **env;
+    char **args;
+    int pipe[2];
+    int prev;
+    int type[2];
+    int len;
+}               t_cmd;
 
-enum rel
+typedef enum e_type
 {
     END = 0,
     PIPE = 1,
-    SEMICOL = 2
-};
-
-typedef struct	s_cmd
-{
-	char     **args;
-	int      pipe[2];
-	int      prev;
-	int      type[2];
-}               t_cmd;
+    SEMICOLON = 2
+}               t_type;
 
 /**************************************
 **               UTILS
 ***************************************/
 
-int     strlen(const char *str)
+int ft_strlen(char *str)
 {
-	int i;
-	
-	i = 0;
-	while (str && str[i])
-		i++;
-	return (i);
+    int i;
+
+    i = 0;
+    while (str && str[i])
+        i++;
+    return (i);
 }
 
-int     putstr_fd(char *str, int fd)
+void    ft_putstr_fd(char *str, int fd)
 {
-    return (write(fd, str, strlen(str)));
+    write(fd, str, ft_strlen(str));
 }
 
 void    print_error(char *msg, char *arg)
 {
-    putstr_fd("error: ", STDERR_FILENO);
-    putstr_fd(msg, STDERR_FILENO);
+    ft_putstr_fd("error: ", 2);
+    ft_putstr_fd(msg, 2);
     if (arg)
     {
-        putstr_fd(" ", STDERR_FILENO);
-        putstr_fd(arg, STDERR_FILENO);
+        ft_putstr_fd(" ", 2);
+        ft_putstr_fd(arg, 2);
     }
-    putstr_fd("\n", STDERR_FILENO);
+    ft_putstr_fd("\n", 2);
 }
 
-void    fatal_error()
+void    fatal_error(void)
 {
     print_error("fatal", 0);
-	exit(1);
+    exit(1);
+}
+
+/**************************************
+**               EXEC
+***************************************/
+    
+int     cmd_exec(t_cmd *cmd)
+{
+    pid_t pid;
+
+    if (cmd->type[1] == PIPE)
+	{
+		if (pipe(cmd->pipe) < 0)
+			fatal_error();
+	}
+    pid = fork();
+    if (pid < 0)
+    {
+        fatal_error();
+    }
+    else if (pid == 0)
+    {
+        if (cmd->type[0] == PIPE)
+            dup2(cmd->prev, 0);
+        if (cmd->type[1] == PIPE)
+            dup2(cmd->pipe[1], 1);
+
+        if (execve(cmd->args[0], cmd->args, cmd->env) < 0)
+        {
+            print_error("cannot execute", cmd->args[0]);
+            exit(1);
+        }
+    }
+    else
+    {
+        waitpid(pid, 0, 0);
+
+		if (cmd->type[1] == PIPE)
+			close(cmd->pipe[1]);
+    
+        if (cmd->type[0] == PIPE)
+            close(cmd->prev);
+        
+        if (cmd->type[0] == PIPE && cmd->type[1] != PIPE)
+            close(cmd->pipe[0]);
+    }
+    return (0);
 }
 
 /**************************************
 **               ALGO
 ***************************************/
 
-void   exec_pipeline(t_cmd *cmd, char **envp)
+int cmd_end(char **argv)
 {
-	pid_t  	pid;
-	int     ex;
+    int i;
 
-	if (cmd->type[1] == PIPE || cmd->type[0] == PIPE)
-	{
-		if (pipe(cmd->pipe) < 0)
-			fatal_error();
-	}
-	pid = fork();
-	if (pid < 0)
-		fatal_error();
-	if (pid == 0)
-	{
-		if (cmd->type[1] == PIPE)
-		{
-			if (dup2(cmd->pipe[OUT], OUT) < 0)
-				fatal_error();
-		}
-		if (cmd->type[0] == PIPE)
-		{
-			if (dup2(cmd->prev_pipe, IN) < 0)
-				fatal_error();
-		}
-		if ((ex = execve(cmd->args[0], cmd->args, envp)) < 0)
-            print_error("cannot execute", cmd->args[0]);
-	
-		exit(ex);
-	}
-	else
-	{
-		waitpid(pid, 0, 0);
-
-		if (cmd->type[1] != PIPE && cmd->type[0] == PIPE)
-			close(cmd->pipe[IN]);
-		
-		if (cmd->type[1] == PIPE || cmd->type[0] == PIPE)
-			close(cmd->pipe[OUT]);
-	
-		if (cmd->type[0] == PIPE)
-			close(cmd->prev_pipe);
-	}
+    i = 0;
+    while (argv[i] && strcmp(argv[i], ";") && strcmp(argv[i], "|"))
+        i++;
+    return (i);
 }
 
-int cmd_next(t_cmd *list, int start, char **argv)
-{
-	int end;
 
-	end = start;
-	while (argv[end] && strcmp(argv[end], ";") && strcmp(argv[end], "|"))
-		end++;
-	if (end - start > 0)
-	{
-		list->type[0] = list->type[1];
-		if (argv[end] == NULL)
-			list->type[1] = END;
-		else if (!strcmp(argv[end], "|"))
-			list->type[1] = PIPE;
-		else if (!strcmp(argv[end], ";"))
-			list->type[1] = SEMICOL;
-		argv[end] = NULL;
-		list->prev_pipe = list->pipe[IN];
-	}
-	return (end);
+int    builtin_cd(t_cmd *cmd)
+{
+    if (cmd->len > 2)
+    {
+        print_error("cd: bad arguments", 0);
+        return (1);
+    }
+    else if (chdir(cmd->args[1]) == -1)
+    {
+        print_error("cd: cannot change directory to", cmd->args[1]);
+        return (1);
+    }
+    return (0);
+}
+
+int cmd_len(t_cmd *cmd, char **argv)
+{
+    int len;
+
+    len = cmd_end(argv);
+    cmd->args = argv;
+    cmd->type[0] = cmd->type[1];
+    if (len > 0)
+    {
+        if (argv[len] == NULL)
+            cmd->type[1] = END;
+        else if (!strcmp(argv[len], "|"))
+            cmd->type[1] = PIPE;
+        else if (!strcmp(argv[len], ";"))
+            cmd->type[1] = SEMICOLON;
+        argv[len] = NULL;
+        cmd->prev = cmd->pipe[0];
+    }
+    return (len);
 }
 
 int main(int argc, char **argv, char **envp)
 {
-	t_cmd	cmd;
-	int		i;
-	int		start;
+    t_cmd cmd;
+    int i;
+    int res;
 
-	i = 0;
-	if (argc > 1)
-	{
-		while (i < argc && argv[i])
-		{
-			start = i;
-			i = cmd_next(&cmd, i, argv);
-			if (!strcmp(argv[start], "cd"))
-			{
-				if (i - start != 2)
-                    print_error("cd: bad arguments", 0);
-				else if (chdir(cmd.args[1]) == -1)
-                    print_error("cd: cannot change directory to", cmd.args[1]);
-			}
-			else if (i > start)
-			{
-				cmd.args = &argv[start];
-				exec_pipeline(&cmd, envp);
-			}
-		}
-	}
-	return 0;
+    i = 1;
+    res = 0;
+    cmd.env = envp;
+    if (argc <= 1)
+        return (0);
+    while (i < argc && argv[i])
+    {
+        cmd.len = cmd_len(&cmd, &argv[i]);
+        i += cmd.len;
+        if (!strcmp(cmd.args[0], "cd"))
+        {
+            res = builtin_cd(&cmd);
+        }
+        else if (cmd.len > 0)
+        {
+            res = cmd_exec(&cmd);
+        }
+        i++;
+    }
+    return (res);
 }
