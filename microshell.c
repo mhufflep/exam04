@@ -70,10 +70,10 @@ int     cmd_exec(t_cmd *cmd)
     pid_t pid;
 
     if (cmd->type[1] == PIPE)
-	{
-		if (pipe(cmd->pipe) < 0)
-			fatal_error();
-	}
+    {
+	if (pipe(cmd->pipe) < 0)
+		fatal_error();
+    }
     pid = fork();
     if (pid < 0)
     {
@@ -95,13 +95,14 @@ int     cmd_exec(t_cmd *cmd)
     else
     {
         waitpid(pid, 0, 0);
-
-		if (cmd->type[1] == PIPE)
-			close(cmd->pipe[1]);
+	
+	if (cmd->type[1] == PIPE)
+            close(cmd->pipe[1]);
     
-        if (cmd->type[0] == PIPE)
+	if (cmd->type[0] == PIPE)
             close(cmd->prev);
         
+	//Last command
         if (cmd->type[0] == PIPE && cmd->type[1] != PIPE)
             close(cmd->pipe[0]);
     }
@@ -117,15 +118,19 @@ int cmd_end(char **argv)
     int i;
 
     i = 0;
-    while (argv[i] && strcmp(argv[i], ";") && strcmp(argv[i], "|"))
+    while (argv[i])
+    {
+	if (!strcmp(argv[i], ";") || !strcmp(argv[i], "|"))
+		break ;
         i++;
+    }
     return (i);
 }
 
 
 int    builtin_cd(t_cmd *cmd)
 {
-    if (cmd->len > 2)
+    if (cmd->len != 2) //Important, exactly != 2
     {
         print_error("cd: bad arguments", 0);
         return (1);
@@ -161,9 +166,9 @@ int cmd_len(t_cmd *cmd, char **argv)
 
 int main(int argc, char **argv, char **envp)
 {
-    t_cmd cmd;
-    int i;
-    int res;
+    t_cmd	cmd;
+    int		res;	//May not be used
+    int		i;
 
     i = 1;
     res = 0;
